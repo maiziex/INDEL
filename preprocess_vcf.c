@@ -30,6 +30,7 @@ typedef struct
     float* knn;
     float* AF;
     int* snporindel_len;
+    int* flag;
 } indel_knn_t;
 
 
@@ -55,6 +56,7 @@ indel_knn_t* init_indel_knn(int64_t max_candidate_num,indel_knn_t* indel_knn)
 {
     indel_knn->candidate_num = 0;
     indel_knn->max_candidate_num = max_candidate_num;
+    indel_knn->flag = (int*) malloc(indel_knn->max_candidate_num*sizeof(int));
     indel_knn->candidate_loci= (int64_t*) malloc(indel_knn->max_candidate_num*sizeof(int64_t));
     indel_knn->knn= (float*) malloc(indel_knn->max_candidate_num*sizeof(float));
     indel_knn->AF= (float*) malloc(indel_knn->max_candidate_num*sizeof(float));
@@ -82,6 +84,7 @@ void free_indel_knn(indel_knn_t* indel_knn)
     free(indel_knn->candidate_loci);
     free(indel_knn->knn);
     free(indel_knn->AF);
+    free(indel_knn->flag);
     free(indel_knn->snporindel_len);
     free(indel_knn);
 }
@@ -92,6 +95,7 @@ void check_recalloc_indel_knn(indel_knn_t* indel_knn)
     if(indel_knn->candidate_num>= indel_knn->max_candidate_num)
     {
         indel_knn->candidate_loci = (int64_t*) realloc(indel_knn->candidate_loci, indel_knn->max_candidate_num*2*sizeof(int64_t));
+        indel_knn->flag = (int*) realloc(indel_knn->flag, indel_knn->max_candidate_num*2*sizeof(int));
         indel_knn->knn = (float*) realloc(indel_knn->knn, indel_knn->max_candidate_num*2*sizeof(float));
         indel_knn->AF = (float*) realloc(indel_knn->AF, indel_knn->max_candidate_num*2*sizeof(float));
         indel_knn->snporindel_len = (int*) realloc(indel_knn->snporindel_len, indel_knn->max_candidate_num*2*sizeof(int));
@@ -266,9 +270,10 @@ void find_KNN(block_t* block, pars_t* pars, indel_knn_t* indel_knn)
                 knnSI =  knnSI + saved_SI[l];
             }
             
-            indel_knn->candidate_loci[indel_knn->candidate_num] = block->candidate_loci[i];
+            indel_knn->candidate_loci[indel_knn->candidate_num] = block->candidate_loci[i]; 
+            indel_knn->flag[indel_knn->candidate_num]=block->flag[i];
             indel_knn->AF[indel_knn->candidate_num] = block->AF[i];
-            indel_knn->snporindel_len[indel_knn->candidate_num]=block->snporindel_len[i];
+            indel_knn->flag[indel_knn->candidate_num]=block->flag[i];
             indel_knn->knn[indel_knn->candidate_num] = knnSI/4.0;
             indel_knn->candidate_num++;
             check_recalloc_indel_knn(indel_knn);
@@ -294,7 +299,7 @@ void find_KNN2(block_t* block, pars_t* pars, indel_knn_t* indel_knn)
     for(i = 0; i < block->candidate_num; i++)
     {
         printf("%i\n",i);
-        if(block->flag[i]==1)  //indel locus
+        if(block->flag[i]==1 || block->flag[i]==2)  //indel locus
         {
             m = 0;
             // initialize knnbucket to zero
@@ -339,6 +344,7 @@ void find_KNN2(block_t* block, pars_t* pars, indel_knn_t* indel_knn)
             
             indel_knn->candidate_loci[indel_knn->candidate_num] = block->candidate_loci[i];
             indel_knn->AF[indel_knn->candidate_num] = block->AF[i];
+            indel_knn->flag[indel_knn->candidate_num]=block->flag[i];
             indel_knn->snporindel_len[indel_knn->candidate_num]=block->snporindel_len[i];
             indel_knn->knn[indel_knn->candidate_num] = knnSI/K_number;
             indel_knn->candidate_num++;
@@ -362,8 +368,8 @@ void print_indel_info(char* output_prefix, indel_knn_t* indel_knn)
     for(i=0;i<indel_knn->candidate_num;i++)
     {
        // printf("here:%i",i);
-        fprintf(output,"%i\t%i\t%f\t%f\t\n",indel_knn->candidate_loci[i],indel_knn->snporindel_len[i],indel_knn->AF[i],indel_knn->knn[i]);
-        printf("%i\t%i\t%f\t%f\t\n",indel_knn->candidate_loci[i],indel_knn->snporindel_len[i],indel_knn->AF[i],indel_knn->knn[i]);
+        fprintf(output,"%i\t%i\t%i\t%f\t%f\t\n",indel_knn->candidate_loci[i],indel_knn->flag[i],indel_knn->snporindel_len[i],indel_knn->AF[i],indel_knn->knn[i]);
+        printf("%i\t%i\t%i\t%f\t%f\t\n",indel_knn->candidate_loci[i],indel_knn->flag[i],indel_knn->snporindel_len[i],indel_knn->AF[i],indel_knn->knn[i]);
     }
     
  free(output_filename);
@@ -459,7 +465,14 @@ void read_vcf_data(char* input_filename,char* output_prefix, pars_t* pars)
         }
         else
         {
-            block->flag[block->candidate_num] = 1; //indel
+            if(ref_length> alt_length)
+            {
+                  block->flag[block->candidate_num] = 1; //delete
+            }
+            else
+            {
+                block->flag[block->candidate_num]=2; //insert
+            }
         }
         
         
