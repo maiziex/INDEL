@@ -7,7 +7,7 @@
 #include <time.h>
 
 #define VCF_MANDATORY 8
-#define MAX_CHROMOSOME_LENGTH 20
+#define MAX_CHROMOSOME_LENGTH 3e6
 
 
 FILE* fileOpenR(char* filename);

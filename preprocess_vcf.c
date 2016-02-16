@@ -62,6 +62,31 @@ indel_knn_t* init_indel_knn(int64_t max_candidate_num,indel_knn_t* indel_knn)
     return indel_knn;
 }
 
+void free_block(block_t* block)
+{
+    int i;
+    for(i=0;i<block->max_candidate_num;i++)
+    {
+        free(block->GT[i]);
+    }
+    free(block->candidate_loci);
+    free(block->flag);
+    free(block->snporindel_len);
+    free(block->AF);
+    free(block->GT);
+    free(block);
+}
+
+void free_indel_knn(indel_knn_t* indel_knn)
+{
+    free(indel_knn->candidate_loci);
+    free(indel_knn->knn);
+    free(indel_knn->AF);
+    free(indel_knn->snporindel_len);
+    free(indel_knn);
+}
+
+
 void check_recalloc_indel_knn(indel_knn_t* indel_knn)
 {
     if(indel_knn->candidate_num>= indel_knn->max_candidate_num)
@@ -163,6 +188,8 @@ void init_query_samples(char* input_filename, pars_t* pars)
 }
 
 
+
+
 float* descend_sort(float* saved_buffer,int64_t candidate_num)
 {
     int i,j,a;
@@ -184,23 +211,36 @@ float* descend_sort(float* saved_buffer,int64_t candidate_num)
 
 
 
+int cmpfunc(const void* a, const void*b)
+{
+    return (*(float*)b-*(float*)a);
+}
+
+
+
 void find_KNN(block_t* block, pars_t* pars, indel_knn_t* indel_knn)
 {
     int i,j,k,m,l;
-    int union_counter = 0;
-    int intersection_counter = 0;
-    float SI,knnSI;
+    int union_counter;
+    int intersection_counter;
+    float SI;
+    float knnSI;
     float* saved_SI = calloc(block->candidate_num,sizeof(float));
+    printf("%i\n",block->candidate_num);
     for(i = 0; i < block->candidate_num; i++)
     {
+        printf("%i\n",i);
         if(block->flag[i]==1)  //indel locus
         {
             m = 0;
+            knnSI = 0.0;
             for(j=0; j< block->candidate_num;j++)
             {
                 if(block->flag[j]==0)  // snp locus
                 {
                     saved_SI[m] = 0;
+                    union_counter=0;
+                    intersection_counter=0;
                     for(k=0; k< pars->sample_num;k++)
                     {
                         if ((block->GT[i][k]==1 || block->GT[i][k]==2) ||  (block->GT[j][k]==1 || block->GT[j][k]==2))
@@ -235,15 +275,105 @@ void find_KNN(block_t* block, pars_t* pars, indel_knn_t* indel_knn)
         }
         
     }
+   free(saved_SI); 
     
+}
+
+
+void find_KNN2(block_t* block, pars_t* pars, indel_knn_t* indel_knn)
+{
+    int i,j,k,m,l,K_number;
+    K_number=4;
+    int union_counter;
+    int intersection_counter;
+    float SI;
+    float knnSI;
+    float* knnbucket = calloc(K_number+1,sizeof(float));
+   
+    printf("%i\n",block->candidate_num);
+    for(i = 0; i < block->candidate_num; i++)
+    {
+        printf("%i\n",i);
+        if(block->flag[i]==1)  //indel locus
+        {
+            m = 0;
+            // initialize knnbucket to zero
+            knnbucket[0]=0.0;
+            knnbucket[1]=0.0;
+            knnbucket[2]=0.0;
+            knnbucket[3]=0.0;
+            knnbucket[4]=0.0;
+
+            knnSI = 0.0;
+            for(j=0; j< block->candidate_num;j++)
+            {
+                if(block->flag[j]==0)  // snp locus
+                {
+                    union_counter=0;
+                    intersection_counter=0;
+                    for(k=0; k< pars->sample_num;k++)
+                    {
+                        if ((block->GT[i][k]==1 || block->GT[i][k]==2) ||  (block->GT[j][k]==1 || block->GT[j][k]==2))
+                        {
+                            union_counter ++;
+                        }
+                        
+                        if ((block->GT[i][k]==1 || block->GT[i][k]==2) &&  (block->GT[j][k]==1 || block->GT[j][k]==2))
+                        {
+                            intersection_counter ++;
+                        }
+                    }
+                    SI =(float) intersection_counter*(1.0)/union_counter;
+                    knnbucket[4] = SI;
+                   // qsort(knnbucket,5,sizeof(float),cmpfunc);
+                    descend_sort(knnbucket,K_number+1);
+
+                }
+                
+            }
+            
+            for(l=0; l< K_number;l++)
+            {
+                knnSI =  knnSI + knnbucket[l];
+            }
+            
+            indel_knn->candidate_loci[indel_knn->candidate_num] = block->candidate_loci[i];
+            indel_knn->AF[indel_knn->candidate_num] = block->AF[i];
+            indel_knn->snporindel_len[indel_knn->candidate_num]=block->snporindel_len[i];
+            indel_knn->knn[indel_knn->candidate_num] = knnSI/K_number;
+            indel_knn->candidate_num++;
+            check_recalloc_indel_knn(indel_knn);
+        }
+        
+    }
+    free(knnbucket);
     
 }
 
 
 
+void print_indel_info(char* output_prefix, indel_knn_t* indel_knn)
+{
+    char* output_filename = (char*) malloc(strlen(output_prefix)+20);
+    sprintf(output_filename,"%s.final",output_prefix);
+    FILE* output;
+    output = fileOpenW(output_filename);
+    int i;
+    for(i=0;i<indel_knn->candidate_num;i++)
+    {
+       // printf("here:%i",i);
+        fprintf(output,"%i\t%i\t%f\t%f\t\n",indel_knn->candidate_loci[i],indel_knn->snporindel_len[i],indel_knn->AF[i],indel_knn->knn[i]);
+        printf("%i\t%i\t%f\t%f\t\n",indel_knn->candidate_loci[i],indel_knn->snporindel_len[i],indel_knn->AF[i],indel_knn->knn[i]);
+    }
+    
+ free(output_filename);
+    fileClose(output);
+}
 
 
-void read_vcf_data(char* input_filename, pars_t* pars)
+
+
+void read_vcf_data(char* input_filename,char* output_prefix, pars_t* pars)
 {
     init_query_samples(input_filename,pars);
     char c,c_prev,c_next;
@@ -278,7 +408,6 @@ void read_vcf_data(char* input_filename, pars_t* pars)
     char* chr = calloc(MAX_CHROMOSOME_LENGTH, sizeof(char));
     char* ref = calloc(MAX_CHROMOSOME_LENGTH, sizeof(char));
     char* alt = calloc(MAX_CHROMOSOME_LENGTH, sizeof(char));
-    
     c = (char) getc(input);
     
     while(c != EOF)
@@ -298,7 +427,7 @@ void read_vcf_data(char* input_filename, pars_t* pars)
             locus = locus * 10 + c - '0';
         }
         
-        printf("%s:%d\n", chr, locus);
+        printf("%s:%i\n", chr, locus);
         /*if(locus==260315)
          {
          printf("hereerror\n");
@@ -425,15 +554,20 @@ void read_vcf_data(char* input_filename, pars_t* pars)
         
     }
     
-    find_KNN(block,pars,indel_knn);
-    for(i=0;i<indel_knn->candidate_num;i++)
-    {
-        printf("%i\t%f\t%f\t",indel_knn->snporindel_len[i],indel_knn->AF[i],indel_knn->knn[i]);
+    find_KNN2(block,pars,indel_knn);
+   //  find_KNN(block,pars,indel_knn);
+   
+ 
+
+        printf("%i",indel_knn->candidate_num);
         printf("\n");
-    }
+    print_indel_info(output_prefix, indel_knn); 
     
-    
-    
+    free_block(block);
+    free_indel_knn(indel_knn);
+    free(chr);
+    free(ref);
+    free(alt);
 }
 
 
@@ -441,10 +575,10 @@ int main(int argc, char* argv[])
 {
     pars_t* pars =  (pars_t*) calloc(1,sizeof(pars_t));
     // set_default_pars(pars);
-    read_vcf_data(argv[1], pars);
+    read_vcf_data(argv[1], argv[2],pars);
     printf("DONE!!!\n");
     
-    
+    free(pars); 
     
     
     
